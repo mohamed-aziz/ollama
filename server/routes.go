@@ -71,6 +71,26 @@ func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]
 		return err
 	}
 
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, syscall.SIGUSR1)
+
+    go func() {
+        <-sigChan
+		log.Println("received SIGUSR1, cleaning up loaded model")
+
+        loaded.mu.Lock()
+        defer loaded.mu.Unlock()
+
+        if loaded.runner != nil {
+            loaded.runner.Close()
+        }
+        loaded.runner = nil
+        loaded.Model = nil
+        loaded.Options = nil
+    }()
+
+
+
 	// check if the loaded model is still running in a subprocess, in case something unexpected happened
 	if loaded.runner != nil {
 		if err := loaded.runner.Ping(ctx); err != nil {
@@ -124,6 +144,10 @@ func load(ctx context.Context, workDir string, model *Model, reqOpts map[string]
 		loaded.expireTimer = time.AfterFunc(sessionDuration, func() {
 			loaded.mu.Lock()
 			defer loaded.mu.Unlock()
+
+			if loaded.runner == nil && loaded.Model == nil && loaded.Options == nil {
+				return
+			}
 
 			if time.Now().Before(loaded.expireAt) {
 				return
